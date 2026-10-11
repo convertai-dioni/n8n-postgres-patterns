@@ -1,0 +1,141 @@
+{
+  "name": "Scheduled incremental sync with watermark",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "Read watermark",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(max(last_synced_at), 'epoch'::timestamptz) AS since FROM sync_state WHERE job = 'crm_contacts';"
+      }
+    },
+    {
+      "id": "3",
+      "name": "Fetch changed records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "url": "https://api.example.com/contacts",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "updated_after",
+              "value": "={{ $json.since }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4",
+      "name": "Upsert batch",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO contacts (external_id, email, updated_at)\nSELECT x.id, x.email, x.updated_at\nFROM jsonb_to_recordset($1::jsonb) AS x(id text, email text, updated_at timestamptz)\nON CONFLICT (external_id) DO UPDATE SET email = EXCLUDED.email, updated_at = EXCLUDED.updated_at;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($input.all().map(i => i.json))] }}"
+        }
+      }
+    },
+    {
+      "id": "5",
+      "name": "Advance watermark",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sync_state (job, last_synced_at) VALUES ('crm_contacts', now())\nON CONFLICT (job) DO UPDATE SET last_synced_at = EXCLUDED.last_synced_at;"
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Read watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read watermark": {
+      "main": [
+        [
+          {
+            "node": "Fetch changed records",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch changed records": {
+      "main": [
+        [
+          {
+            "node": "Upsert batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert batch": {
+      "main": [
+        [
+          {
+            "node": "Advance watermark",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
