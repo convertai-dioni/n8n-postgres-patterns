@@ -1,4 +1,5 @@
 {
+  "id": "patterns02",
   "name": "Scheduled incremental sync with watermark",
   "nodes": [
     {
@@ -137,5 +138,6 @@
   },
   "settings": {
     "executionOrder": "v1"
-  }
+  },
+  "active": false
 }
